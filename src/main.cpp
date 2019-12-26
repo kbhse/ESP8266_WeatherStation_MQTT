@@ -1,7 +1,7 @@
 /*  src/main.cpp */
 
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                      // program name
-#define VERSION "v04.02"                                                                           // program version (nb lowercase 'version' is keyword)
+#define VERSION "v04.03"                                                                           // program version (nb lowercase 'version' is keyword)
 #define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity"                                // what the program does
 #define HARDWARE "Wemos D1 mini, pro and Shields"                                                  // hardware version
 #define AUTHOR "J Manson"                                                                          // created by
@@ -31,6 +31,7 @@ const char* mqttPassword = "hTR7gxBY4";
 /* Changelog
 04.00 average 10 samples
 04.02 add routines to change update frequency from Node RED via MQTT
+04.03 temporarily disable the averaging routine
 */
 
 #include <Arduino.h>
@@ -188,6 +189,9 @@ void readSensors()
         #endif
         static char temperatureTemp[7];                                                            // client.publish() expects char array
         static char humidityTemp[7];
+        float temperature = 0;
+        float humidity = 0;
+        /*
         float averageTemperature = 0;
         float averageHumidity = 0;
         // get average of 10 consecutive readings
@@ -204,6 +208,13 @@ void readSensors()
         // publish average temperature to mqtt
         dtostrf(averageTemperature, 6, 2, temperatureTemp);                                        // convert float to char array
         dtostrf(averageHumidity, 6, 2, humidityTemp);
+        */
+        sht30.get();
+        temperature += sht30.cTemp;
+        humidity += sht30.humidity;
+        dtostrf(temperature, 6, 2, temperatureTemp);                                        // convert float to char array
+        dtostrf(humidity, 6, 2, humidityTemp);
+
         client.publish(MQTT_LOCATION "/temperature", temperatureTemp);
         client.publish(MQTT_LOCATION "/humidity", humidityTemp);
         #ifdef DEBUG_OUT
