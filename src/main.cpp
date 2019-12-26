@@ -1,7 +1,7 @@
 /*  src/main.cpp */
 
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                      // program name
-#define VERSION "v04.01"                                                                           // program version (nb lowercase 'version' is keyword)
+#define VERSION "v04.02"                                                                           // program version (nb lowercase 'version' is keyword)
 #define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity"                                // what the program does
 #define HARDWARE "Wemos D1 mini, pro and Shields"                                                  // hardware version
 #define AUTHOR "J Manson"                                                                          // created by
@@ -14,6 +14,8 @@
 #define MQTT_LOCATION "test"                                                                     // location for MQTT topic
 #define UPDATE_FREQ 60000L                                                                         // 60 seconds
 
+long updateFreq = 0;                                                                               // the update frequency for sensors and publish to MQYY
+int timerID;
 
 // ------------------------------------------------------------------
 // MQTT
@@ -28,7 +30,7 @@ const char* mqttPassword = "hTR7gxBY4";
 
 /* Changelog
 04.00 average 10 samples
-04.01 add routine to change update frequency from Node RED
+04.02 add routines to change update frequency from Node RED via MQTT
 */
 
 #include <Arduino.h>
@@ -91,44 +93,6 @@ const int lamp = LED_BUILTIN;
 SimpleTimer timer;
 
 // ------------------------------------------------------------------
-// This functions is executed when some device publishes a message to a topic that your ESP8266 is subscribed to
-// Change the function below to add logic to your program, so when a device publishes a message to a topic that 
-// your ESP8266 is subscribed you can actually do something
-void callback(String topic, byte* message, unsigned int length)
-    {
-    Serial.print("Message arrived on topic: ");
-    Serial.print(topic);
-    Serial.print(". Message: ");
-    String messageTemp;
-  
-    for (int i = 0; i < length; i++)
-        {
-        Serial.print((char)message[i]);
-        messageTemp += (char)message[i];
-        }
-    Serial.println();
-
-    // Feel free to add more if statements to control more GPIOs with MQTT
-
-    // If a message is received on the topic room/lamp, you check if the message is either on or off. Turns the lamp GPIO according to the message
-    if(topic == MQTT_LOCATION "/lamp")
-        {
-        Serial.print("Changing Room lamp to ");
-        if(messageTemp == "on")
-            {
-            digitalWrite(lamp, LOW);                                                               // active LOW
-            Serial.print("On");
-            }
-        else if(messageTemp == "off")
-            {
-            digitalWrite(lamp, HIGH);
-            Serial.print("Off");
-            }
-        }
-        Serial.println();
-    }
-
-// ------------------------------------------------------------------
 // This functions reconnects your ESP8266 to your MQTT broker
 // Change the function below if you want to subscribe to more topics with your ESP8266 
     void reconnect()
@@ -155,6 +119,7 @@ void callback(String topic, byte* message, unsigned int length)
             // Subscribe or resubscribe to a topic
             // You can subscribe to more topics (to control more LEDs in this example)
             client.subscribe(MQTT_LOCATION "/lamp");
+            client.subscribe(MQTT_LOCATION "/freq");
             }
         else
             {
@@ -290,6 +255,59 @@ void readSensors()
 */
   	} // end of readSensors()
 
+// ------------------------------------------------------------------
+// This functions is executed when some device publishes a message to a topic that your ESP8266 is subscribed to
+// Change the function below to add logic to your program, so when a device publishes a message to a topic that 
+// your ESP8266 is subscribed you can actually do something
+void callback(String topic, byte* message, unsigned int length)
+    {
+    Serial.print("Message arrived on topic: ");
+    Serial.print(topic);
+    Serial.print(". Message: ");
+    String messageTemp;
+  
+    for (int i = 0; i < length; i++)
+        {
+        Serial.print((char)message[i]);
+        messageTemp += (char)message[i];
+        }
+    Serial.println();
+
+    // Feel free to add more if statements to control more GPIOs with MQTT
+
+    // If a message is received on the topic room/lamp, you check if the message is either on or off. Turns the lamp GPIO according to the message
+    // NB need to subscribe to topics in reconnect() !!
+
+    if(topic == MQTT_LOCATION "/freq")
+        {
+        updateFreq = messageTemp.toInt();
+        Serial.print("freq: ");
+        Serial.println(updateFreq);
+        if(timer.isEnabled(timerID))                                                               // if timer has already been started (in setup())
+            {
+            timer.deleteTimer(timerID);
+            timerID = timer.setInterval(updateFreq, readSensors);                                  // restart timer with new updateFreq
+            }
+        }
+
+    if(topic == MQTT_LOCATION "/lamp")
+        {
+        Serial.print("Changing Room lamp to ");
+        if(messageTemp == "on")
+            {
+            digitalWrite(lamp, LOW);                                                               // active LOW
+            Serial.print("On");
+            }
+        else if(messageTemp == "off")
+            {
+            digitalWrite(lamp, HIGH);
+            Serial.print("Off");
+            }
+        }
+        Serial.println();
+    }
+
+// ------------------------------------------------------------------
 
 void setup()
     {
@@ -318,7 +336,31 @@ void setup()
             }
     #endif
 
-    timer.setInterval(UPDATE_FREQ, readSensors);                                                        // every x minutes, send data to MQTT
+    if (!client.connected())
+        {
+        reconnect();
+        }
+
+    // request the update frequency (from Node RED)
+    client.publish(MQTT_LOCATION "/update", "freq");
+
+    // wait for MQTT to publish the update frequency
+    Serial.println("waiting for MQTT to publish the update frequency");
+    while (updateFreq == 0) 
+        {
+        Serial.print(".");
+        delay(500);
+        client.loop();
+        //yield();
+        }
+    //Serial.print("freq: ");
+    //Serial.println(updateFreq);
+ 
+    // start the timer
+    timerID = timer.setInterval(updateFreq, readSensors);                                                        // every x milliseconds, send data to MQTT
+
+    Serial.print("timerID: ");
+    Serial.println(timerID);
 
     } // end of setup()
 
@@ -332,7 +374,7 @@ void loop()
         }
     if (!client.loop())
         {
-        client.connect("ESP8266Client");
+        client.connect(MQTT_DEVICE);
         }
 
     timer.run();
