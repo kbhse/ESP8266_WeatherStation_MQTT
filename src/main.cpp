@@ -1,20 +1,20 @@
 /*  src/main.cpp */
 
-#define PROGNAM "ESP8266_WeatherStation_MQTT"                                                      // program name
-#define VERSION "v04.03"                                                                           // program version (nb lowercase 'version' is keyword)
-#define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity"                                // what the program does
-#define HARDWARE "Wemos D1 mini, pro and Shields"                                                  // hardware version
-#define AUTHOR "J Manson"                                                                          // created by
-#define CREATION_DATE "December 2019"                                                              // date
+#define PROGNAM "ESP8266_WeatherStation_MQTT"                                                       // program name
+#define VERSION "v04.06"                                                                            // program version (nb lowercase 'version' is keyword)
+#define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity"                                 // what the program does
+#define HARDWARE "Wemos D1 mini, pro and Shields"                                                   // hardware version
+#define AUTHOR "J Manson"                                                                           // created by
+#define CREATION_DATE "Jan 2020"                                                                    // date
 //#define DEBUG_OUT
 
 // NB number the ESP8266 devices and edit the next 2 #defines accordingly !
-#define MQTT_DEVICE "esp08"                                                                        // MQTT requires unique device ID (see reconnect() function)
-#define PUB_SUB_CLIENT esp08client                                                                 // and unique client ?
-#define MQTT_LOCATION "test"                                                                     // location for MQTT topic
-#define UPDATE_FREQ 60000L                                                                         // 60 seconds
+#define MQTT_DEVICE "esp08"                                                                         // MQTT requires unique device ID (see reconnect() function)
+#define PUB_SUB_CLIENT esp08client                                                                  // and unique client ?
+#define MQTT_LOCATION "test"                                                                        // location for MQTT topic
+#define UPDATE_FREQ 60000L                                                                          // 60 seconds
 
-long updateFreq = 0;                                                                               // the update frequency for sensors and publish to MQYY
+long updateFreq = 0;                                                                                // the update frequency for sensors and publish to MQTT
 int timerID;
 
 // ------------------------------------------------------------------
@@ -28,38 +28,54 @@ const char* mqttPassword = "hTR7gxBY4";
 //                 https://github.com/knolleary/pubsubclient
 // ------------------------------------------------------------------
 
+/*
+ToDo:
+set limits for sensor updateFreqs based on response times
+remove averaging and median filters. just send raw data at updateFreq
+(raw data to database, smoothing in Node RED)
+*/
+
 /* Changelog
 04.00 average 10 samples
 04.02 add routines to change update frequency from Node RED via MQTT
 04.03 temporarily disable the averaging routine
+04.04 fix esp8266 broadcasting unwanted open wifi network (in setup_wifi())
+04.05 add credentials for BTHub6-7N5K
+04.06 fix routines to change update frequency from Node RED via MQTT
 */
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include "SimpleTimer.h"                                                                           // https://playground.arduino.cc/Code/SimpleTimer/ https://github.com/marcelloromani/arduino/tree/master/SimpleTimer
-#include "WEMOS_SHT3X.h"                                                                           // Wemos Temperature and Humidity shield library
-#include "PubSubClient.h"                                                                          // https://github.com/knolleary/pubsubclient
+#include "SimpleTimer.h"                                                                            // https://playground.arduino.cc/Code/SimpleTimer/ https://github.com/marcelloromani/arduino/tree/master/SimpleTimer
+#include "WEMOS_SHT3X.h"                                                                            // Wemos Temperature and Humidity shield library
+#include "PubSubClient.h"                                                                           // https://github.com/knolleary/pubsubclient
 
 // Comment out sensors not in use
 // ------------------------------
-#define WEMOS_SHT30                                                                                // Wemos Temperature and Humidity shield
-//#define WEMOS_HP303                                                                                // Wemos Barometric Pressure Shield
-//#define WEMOS_BH1750                                                                               // Wemos Ambient Light Shield
-//#define WEMOS_BATTERY                                                                              // Wemos Battery Shield
+#define WEMOS_SHT30                                                                                 // Wemos Temperature and Humidity shield
+//#define WEMOS_HP303                                                                                 // Wemos Barometric Pressure Shield
+//#define WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
+//#define WEMOS_BATTERY                                                                               // Wemos Battery Shield
 //#define RSSI                                                                                        // measure RSSI
 
 // define which WiFi network to connect to (only 1 should be active)
 // -----------------------------------------------------------------
-#define BTHUB
+//#define BTHUB
+#define BTHUB6
 //#define LINKSYS
 
-#ifdef BTHUB                                                                                       // Gym
-    const char* ssid = "BTHub4-5H9P";                                                              // BTHub WiFi credentials
+#ifdef BTHUB                                                                                        // Gym
+    const char* ssid = "BTHub4-5H9P";                                                               // BTHub WiFi credentials
     const char* password = "nB67c3zuRlPrAVcZL5YN";
 #endif
 
-#ifdef LINKSYS                                                                                     // Shed
-    const char* ssid = "linksys";                                                                  // BTHub WiFi credentials
+#ifdef BTHUB6                                                                                       // Gym
+    const char* ssid = "BTHub6-7N5K";                                                               // new BTHub WiFi credentials
+    const char* password = "QeC3RCJGeUvx";
+#endif
+
+#ifdef LINKSYS                                                                                      // Garage
+    const char* ssid = "linksys";                                                                   // BTHub WiFi credentials
     const char* password = "rhenigidale";
 #endif
 
@@ -74,20 +90,20 @@ const int lamp = LED_BUILTIN;
 // ------------------------------------------------------------------
 
 #ifdef WEMOS_SHT30
-    #include <WEMOS_SHT3X.h>                                                                       // Wemos Temperature and Humidity shield
-    SHT3X sht30(0x45);                                                                             // SHT30 shield has two user selectable I2C addresses
+    #include <WEMOS_SHT3X.h>                                                                        // Wemos Temperature and Humidity shield
+    SHT3X sht30(0x45);                                                                              // SHT30 shield has two user selectable I2C addresses
     //static char sht_temperature[7];
     //static char sht_humidity[7];
 #endif
 
 #ifdef WEMOS_HP303
-    #include <LOLIN_HP303B.h>                                                                      // Wemos Barometric Pressure HP303B Shield https://github.com/wemos/LOLIN_HP303B_Library
+    #include <LOLIN_HP303B.h>                                                                       // Wemos Barometric Pressure HP303B Shield https://github.com/wemos/LOLIN_HP303B_Library
     LOLIN_HP303B HP303B;
 #endif
 
-#ifdef WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
-    #include <BH1750.h>                                                                            // ambient light sensor https://github.com/claws/BH1750
-    BH1750 lightMeter(0x23);                                                                       // BH1750 can be configured to use two I2C addresses, 0x23 (default)or 0x5C
+#ifdef WEMOS_BH1750                                                                                 // Wemos Ambient Light Shield
+    #include <BH1750.h>                                                                             // ambient light sensor https://github.com/claws/BH1750
+    BH1750 lightMeter(0x23);                                                                        // BH1750 can be configured to use two I2C addresses, 0x23 (default)or 0x5C
 #endif
 // ------------------------------------------------------------------
 
@@ -120,7 +136,8 @@ SimpleTimer timer;
             // Subscribe or resubscribe to a topic
             // You can subscribe to more topics (to control more LEDs in this example)
             client.subscribe(MQTT_LOCATION "/lamp");
-            client.subscribe(MQTT_LOCATION "/freq");
+            //client.subscribe(MQTT_LOCATION "/freq");
+            client.subscribe("update/Freq/" MQTT_LOCATION);
             }
         else
             {
@@ -142,6 +159,10 @@ void setup_wifi()
     Serial.print("Connecting to ");
     Serial.println(ssid);
     WiFi.begin(ssid, password);
+    // the next line to fix esp8266 broadcasting unwanted open wifi network
+    // it is placed AFTER WiFi.begin() !!
+    // see: https://forum.arduino.cc/index.php?topic=501263.0 and https://github.com/esp8266/Arduino/issues/549
+    WiFi.mode(WIFI_STA);
     while (WiFi.status() != WL_CONNECTED)
         {
         delay(500);
@@ -154,7 +175,7 @@ void setup_wifi()
 
 // ------------------------------------------------------------------
 
-void combSort11(float *ar, uint8_t n)                                                              // this was used for median when temp samples stored in array
+void combSort11(float *ar, uint8_t n)                                                               // this was used for median when temp samples stored in array
 {
   uint8_t i, j, gap, swapped = 1;
   float temp;
@@ -181,13 +202,13 @@ void combSort11(float *ar, uint8_t n)                                           
 // ------------------------------------------------------------------
 
 void readSensors()
-    {                                                                                              // function: reads sensors and sends data to blynk app
+    {                                                                                               // function: reads sensors and sends data to blynk app
 	
-    #ifdef WEMOS_SHT30                                                                             // temperature and humidity
+    #ifdef WEMOS_SHT30                                                                              // temperature and humidity
         #ifdef DEBUG_OUT
             Serial.println(F("Reading the SHT30: "));
         #endif
-        static char temperatureTemp[7];                                                            // client.publish() expects char array
+        static char temperatureTemp[7];                                                             // client.publish() expects char array
         static char humidityTemp[7];
         float temperature = 0;
         float humidity = 0;
@@ -206,13 +227,13 @@ void readSensors()
         averageTemperature /= 10;
         averageHumidity /= 10;
         // publish average temperature to mqtt
-        dtostrf(averageTemperature, 6, 2, temperatureTemp);                                        // convert float to char array
+        dtostrf(averageTemperature, 6, 2, temperatureTemp);                                         // convert float to char array
         dtostrf(averageHumidity, 6, 2, humidityTemp);
         */
         sht30.get();
         temperature += sht30.cTemp;
         humidity += sht30.humidity;
-        dtostrf(temperature, 6, 2, temperatureTemp);                                        // convert float to char array
+        dtostrf(temperature, 6, 2, temperatureTemp);                                                // convert float to char array
         dtostrf(humidity, 6, 2, humidityTemp);
 
         client.publish(MQTT_LOCATION "/temperature", temperatureTemp);
@@ -232,8 +253,8 @@ void readSensors()
         int32_t pressure;
         float hPa;
         static char hPaTemp[7];
-        HP303B.measurePressureOnce(pressure);                                                      // read the barometric pressure
-        hPa = pressure / 100.0;                                                                    // convert to hPa (note 100.0 for cast to float)
+        HP303B.measurePressureOnce(pressure);                                                       // read the barometric pressure
+        hPa = pressure / 100.0;                                                                     // convert to hPa (note 100.0 for cast to float)
         #ifdef DEBUG_OUT
             Serial.println(hPa);
         #endif
@@ -245,23 +266,23 @@ void readSensors()
         #ifdef DEBUG_OUT
             Serial.println(F("Reading the BH1750: "));
         #endif
-        uint16_t lux = lightMeter.readLightLevel();                                                // read the light level
+        uint16_t lux = lightMeter.readLightLevel();                                                 // read the light level
         static char luxStr[5];
         itoa(lux, luxStr, 10);
         client.publish(MQTT_LOCATION "/light", luxStr);
     #endif
 /*
     #ifdef RSSI
-        int rssi = WiFi.RSSI();                                                                        // get RSSI (received signal strength indicator) of WiFi connection
+        int rssi = WiFi.RSSI();                                                                     // get RSSI (received signal strength indicator) of WiFi connection
         static char rssiStr[5];
         itoa(rssi, rssiStr, 10);
         client.publish(MQTT_LOCATION "/rssi", rssiStr);
     #endif
 
     #ifdef WEMOS_BATTERY
-        int adc = analogRead(0);                                                                   // read the ESP ADC (connected to battery)
-        float v = (adc * 4.335) / 1024;                                                            // calculate the voltage (fsd 4.335v)
-        Blynk.virtualWrite(V47, v);                                                                // send to app
+        int adc = analogRead(0);                                                                    // read the ESP ADC (connected to battery)
+        float v = (adc * 4.335) / 1024;                                                             // calculate the voltage (fsd 4.335v)
+        Blynk.virtualWrite(V47, v);                                                                 // send to app
     #endif
 */
   	} // end of readSensors()
@@ -289,15 +310,16 @@ void callback(String topic, byte* message, unsigned int length)
     // If a message is received on the topic room/lamp, you check if the message is either on or off. Turns the lamp GPIO according to the message
     // NB need to subscribe to topics in reconnect() !!
 
-    if(topic == MQTT_LOCATION "/freq")
+    //if(topic == MQTT_LOCATION "/freq")
+    if(topic == "update/Freq/" MQTT_LOCATION)
         {
         updateFreq = messageTemp.toInt();
         Serial.print("freq: ");
         Serial.println(updateFreq);
-        if(timer.isEnabled(timerID))                                                               // if timer has already been started (in setup())
+        if(timer.isEnabled(timerID))                                                                // if timer has already been started (in setup())
             {
             timer.deleteTimer(timerID);
-            timerID = timer.setInterval(updateFreq, readSensors);                                  // restart timer with new updateFreq
+            timerID = timer.setInterval(updateFreq, readSensors);                                   // restart timer with new updateFreq
             }
         }
 
@@ -306,7 +328,7 @@ void callback(String topic, byte* message, unsigned int length)
         Serial.print("Changing Room lamp to ");
         if(messageTemp == "on")
             {
-            digitalWrite(lamp, LOW);                                                               // active LOW
+            digitalWrite(lamp, LOW);                                                                // active LOW
             Serial.print("On");
             }
         else if(messageTemp == "off")
@@ -332,12 +354,12 @@ void setup()
     client.setServer(mqtt_server, mqttPort);
     client.setCallback(callback);
 
-    #ifdef WEMOS_HP303                                                                             // Wemos Barometric Pressure HP303B Shield
-        HP303B.begin();                                                                            // I2C address = 0x77 (or HP303B.begin(0x76); //I2C address = 0x76)
+    #ifdef WEMOS_HP303                                                                              // Wemos Barometric Pressure HP303B Shield
+        HP303B.begin();                                                                             // I2C address = 0x77 (or HP303B.begin(0x76); //I2C address = 0x76)
     #endif
 
     #ifdef WEMOS_BH1750
-        if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE))                                    // begin returns a boolean that can be used to detect setup problems
+        if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE))                                     // begin returns a boolean that can be used to detect setup problems
             {
             Serial.println(F("BH1750 Advanced begin"));
             }
@@ -353,7 +375,8 @@ void setup()
         }
 
     // request the update frequency (from Node RED)
-    client.publish(MQTT_LOCATION "/update", "freq");
+    //client.publish(MQTT_LOCATION "/update", "freq");
+    client.publish( "update/getFreq", MQTT_LOCATION);
 
     // wait for MQTT to publish the update frequency
     Serial.println("waiting for MQTT to publish the update frequency");
@@ -368,7 +391,7 @@ void setup()
     //Serial.println(updateFreq);
  
     // start the timer
-    timerID = timer.setInterval(updateFreq, readSensors);                                                        // every x milliseconds, send data to MQTT
+    timerID = timer.setInterval(updateFreq, readSensors);                                           // every x milliseconds, send data to MQTT
 
     Serial.print("timerID: ");
     Serial.println(timerID);
