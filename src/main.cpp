@@ -1,18 +1,33 @@
-/*  src/main.cpp */
-
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                       // program name
-#define VERSION "v04.06"                                                                            // program version (nb lowercase 'version' is keyword)
-#define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity"                                 // what the program does
-#define HARDWARE "Wemos D1 mini, pro and Shields"                                                   // hardware version
+#define VERSION "v04.07"                                                                            // program version (nb lowercase 'version' is keyword)
+#define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind"                                 // what the program does
+#define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                                   // hardware version
 #define AUTHOR "J Manson"                                                                           // created by
-#define CREATION_DATE "Jan 2020"                                                                    // date
+#define CREATION_DATE "Feb 2020"                                                                    // date
 //#define DEBUG_OUT
 
+/* Changelog
+04.00 average 10 samples
+04.02 add routines to change update frequency from Node RED via MQTT
+04.03 temporarily disable the averaging routine
+04.04 fix esp8266 broadcasting unwanted open wifi network (in setup_wifi())
+04.05 add credentials for BTHub6-7N5K
+04.06 fix routines to change update frequency from Node RED via MQTT
+04.07 adding RS485 wind sensors
+*/
+
+/*
+ToDo:
+set limits for sensor updateFreqs based on response times
+remove averaging and median filters. just send raw data at updateFreq
+(raw data to database, smoothing in Node RED)
+*/
+
 // NB number the ESP8266 devices and edit the next 2 #defines accordingly !
-#define MQTT_DEVICE "esp04"                                                                         // MQTT requires unique device ID (see reconnect() function)
-#define PUB_SUB_CLIENT esp04client                                                                  // and unique client ?
-#define MQTT_LOCATION "garage"                                                                        // location for MQTT topic
-#define UPDATE_FREQ 60000L                                                                          // 60 seconds
+#define MQTT_DEVICE "esp10"                                                                         // MQTT requires unique device ID (see reconnect() function)
+#define PUB_SUB_CLIENT esp10client                                                                  // and unique client ?
+#define MQTT_LOCATION "windMast"                                                                    // location for MQTT topic
+//#define UPDATE_FREQ 60000L                                                                          // 60 seconds
 
 long updateFreq = 0;                                                                                // the update frequency for sensors and publish to MQTT
 int timerID;
@@ -35,41 +50,29 @@ const char* mqttPassword = "hTR7gxBY4";
 //                 https://github.com/knolleary/pubsubclient
 // ------------------------------------------------------------------
 
-/*
-ToDo:
-set limits for sensor updateFreqs based on response times
-remove averaging and median filters. just send raw data at updateFreq
-(raw data to database, smoothing in Node RED)
-*/
 
-/* Changelog
-04.00 average 10 samples
-04.02 add routines to change update frequency from Node RED via MQTT
-04.03 temporarily disable the averaging routine
-04.04 fix esp8266 broadcasting unwanted open wifi network (in setup_wifi())
-04.05 add credentials for BTHub6-7N5K
-04.06 fix routines to change update frequency from Node RED via MQTT
-*/
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include "SimpleTimer.h"                                                                            // https://playground.arduino.cc/Code/SimpleTimer/ https://github.com/marcelloromani/arduino/tree/master/SimpleTimer
 #include "WEMOS_SHT3X.h"                                                                            // Wemos Temperature and Humidity shield library
 #include "PubSubClient.h"                                                                           // https://github.com/knolleary/pubsubclient
-
+#include "SoftwareSerial.cpp"                                                                       // https://github.com/plerup/espsoftwareserial
+                                                                                                    // NB ESP needs this version of SoftwareSerial !! (and needs to be in PLatform IO lib)
 // Comment out sensors not in use
 // ------------------------------
-#define WEMOS_SHT30                                                                                 // Wemos Temperature and Humidity shield
-#define WEMOS_HP303                                                                                 // Wemos Barometric Pressure Shield
-#define WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
+//#define WEMOS_SHT30                                                                                 // Wemos Temperature and Humidity shield
+//#define WEMOS_HP303                                                                                 // Wemos Barometric Pressure Shield
+//#define WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
 //#define WEMOS_BATTERY                                                                               // Wemos Battery Shield
 //#define RSSI                                                                                        // measure RSSI
+#define RS485_WIND                                                                                  // Anemometer and Wind Direction
 
 // define which WiFi network to connect to (only 1 should be active)
 // -----------------------------------------------------------------
 //#define BTHUB
-//#define BTHUB6
-#define LINKSYS
+#define BTHUB6
+//#define LINKSYS
 
 #ifdef BTHUB                                                                                        // Weights Room
     const char* ssid = "BTHub4-5H9P";                                                               // BTHub WiFi credentials
@@ -112,6 +115,24 @@ const int lamp = LED_BUILTIN;
     #include <BH1750.h>                                                                             // ambient light sensor https://github.com/claws/BH1750
     BH1750 lightMeter(0x23);                                                                        // BH1750 can be configured to use two I2C addresses, 0x23 (default)or 0x5C
 #endif
+
+#ifdef RS485_WIND
+    const byte anemometerInquiryFrame[] = {0x01, 0x03, 0x00, 0x16, 0x00, 0x01, 0x65, 0xCE};            // Anemometer Inquiry frame
+    const byte windDirectionInquiryFrame[] = {0x02, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x39};         // Wind Direction Sensor Inquiry frame
+    byte responseFrameBuff[7] = {};                                                                    // buffer for receiving response frame from sensors
+    //long updateFreq;                                                                                   // sensor update frequency (millis)
+    float windSpeed;
+
+    #define rxPin D7                                                                                  // SoftwareSerial receive pin
+    #define txPin D6                                                                                  // SoftwareSerial transmit pin
+    #define rtsPin D5                                                                                 // RS485 RTS direction control
+    #define transmit HIGH
+    #define receive LOW
+    #define ledPin D4
+
+    SoftwareSerial RS485(rxPin, txPin);                                                                // instantiate SoftwareSerial object
+#endif
+
 // ------------------------------------------------------------------
 
 SimpleTimer timer;
@@ -292,6 +313,29 @@ void readSensors()
         Blynk.virtualWrite(V47, v);                                                                 // send to app
     #endif
 */
+    #ifdef RS485_WIND
+        digitalWrite(rtsPin, transmit);                                                                // init transmission
+        RS485.write(anemometerInquiryFrame, sizeof(anemometerInquiryFrame));                           // send the Inquiry
+        RS485.flush();                                                                                 // Wait for the transmission to complete
+
+        digitalWrite(rtsPin, receive);                                                                 // init receive
+        responseFrameBuff[] = {};                                                                      // clear the buffer
+        RS485.readBytes(responseFrameBuff, 7);                                                         // read the data
+
+        #ifdef DEBUG_OUT
+            Serial.print("wind speed: ");
+            for(byte i = 0; i < 7; i++)
+                {
+                Serial.print(responseFrameBuff[i], HEX);
+                Serial.print(" ");
+                }
+            Serial.print(" ==> ");
+            windSpeed = responseFrameBuff[4] / 10.0;
+            Serial.print(windSpeed);
+            Serial.println(" m/s");
+        #endif
+    #endif
+
   	} // end of readSensors()
 
 // ------------------------------------------------------------------
@@ -374,6 +418,13 @@ void setup()
             {
             Serial.println(F("Error initialising BH1750"));
             }
+    #endif
+
+    #ifdef RS485_WIND
+        pinMode(rtsPin, OUTPUT);
+        pinMode(ledPin, OUTPUT);
+        RS485.begin(9600);
+        delay(1000);
     #endif
 
     if (!client.connected())
