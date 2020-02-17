@@ -1,10 +1,20 @@
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                       // program name
 #define VERSION "v04.07"                                                                            // program version (nb lowercase 'version' is keyword)
-#define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind"                                 // what the program does
-#define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                                   // hardware version
+#define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind"                           // what the program does
+#define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                    // hardware version
 #define AUTHOR "J Manson"                                                                           // created by
 #define CREATION_DATE "Feb 2020"                                                                    // date
 //#define DEBUG_OUT
+
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
+#include "SimpleTimer.h"                                                                            // https://playground.arduino.cc/Code/SimpleTimer/ https://github.com/marcelloromani/arduino/tree/master/SimpleTimer
+#include "WEMOS_SHT3X.h"                                                                            // Wemos Temperature and Humidity shield library
+#include "PubSubClient.h"                                                                           // https://github.com/knolleary/pubsubclient
+#include "SoftwareSerial.cpp"                                                                       // https://github.com/plerup/espsoftwareserial
+                                                                                                    // NB ESP needs this version of SoftwareSerial !! (and needs to be in PLatform IO lib)
+// MQTT code from: https://randomnerdtutorials.com/raspberry-pi-publishing-mqtt-messages-to-esp8266/
+//                 https://github.com/knolleary/pubsubclient
 
 /* Changelog
 04.00 average 10 samples
@@ -23,7 +33,8 @@ remove averaging and median filters. just send raw data at updateFreq
 (raw data to database, smoothing in Node RED)
 */
 
-// NB number the ESP8266 devices and edit the next 2 #defines accordingly !
+// ------------------------------------------------------------------
+// unique number for each ESP8266 device and edit the next 2 #defines accordingly
 #define MQTT_DEVICE "esp10"                                                                         // MQTT requires unique device ID (see reconnect() function)
 #define PUB_SUB_CLIENT esp10client                                                                  // and unique client ?
 #define MQTT_LOCATION "windMast"                                                                    // location for MQTT topic
@@ -46,21 +57,9 @@ const char* mqttUser = "mqttUser";
 const char* mqttPassword = "hTR7gxBY4";
 */
 
-// MQTT code from: https://randomnerdtutorials.com/raspberry-pi-publishing-mqtt-messages-to-esp8266/
-//                 https://github.com/knolleary/pubsubclient
 // ------------------------------------------------------------------
-
-
-
-#include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include "SimpleTimer.h"                                                                            // https://playground.arduino.cc/Code/SimpleTimer/ https://github.com/marcelloromani/arduino/tree/master/SimpleTimer
-#include "WEMOS_SHT3X.h"                                                                            // Wemos Temperature and Humidity shield library
-#include "PubSubClient.h"                                                                           // https://github.com/knolleary/pubsubclient
-#include "SoftwareSerial.cpp"                                                                       // https://github.com/plerup/espsoftwareserial
-                                                                                                    // NB ESP needs this version of SoftwareSerial !! (and needs to be in PLatform IO lib)
 // Comment out sensors not in use
-// ------------------------------
+
 //#define WEMOS_SHT30                                                                                 // Wemos Temperature and Humidity shield
 //#define WEMOS_HP303                                                                                 // Wemos Barometric Pressure Shield
 //#define WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
@@ -68,8 +67,9 @@ const char* mqttPassword = "hTR7gxBY4";
 //#define RSSI                                                                                        // measure RSSI
 #define RS485_WIND                                                                                  // Anemometer and Wind Direction
 
-// define which WiFi network to connect to (only 1 should be active)
 // -----------------------------------------------------------------
+// define which WiFi network to connect to (only 1 should be active)
+
 //#define BTHUB
 #define BTHUB6
 //#define LINKSYS
@@ -89,6 +89,7 @@ const char* mqttPassword = "hTR7gxBY4";
     const char* password = "rhenigidale";
 #endif
 
+// -----------------------------------------------------------------
 // Initializes the espClient. You should change the espClient name if you have multiple ESPs running in your home automation system
 //WiFiClient espClient;
 WiFiClient PUB_SUB_CLIENT;
@@ -227,7 +228,10 @@ void combSort11(float *ar, uint8_t n)                                           
     }
   }
 }
+
 // ------------------------------------------------------------------
+// read the sensors and publish to MQTT
+// called by timer @ updateFreq
 
 void readSensors()
     {                                                                                               // function: reads sensors and sends data to blynk app
@@ -392,7 +396,6 @@ void callback(String topic, byte* message, unsigned int length)
     }
 
 // ------------------------------------------------------------------
-
 void setup()
     {
 
@@ -456,7 +459,7 @@ void setup()
 
     } // end of setup()
 
-
+// ------------------------------------------------------------------
 void loop()
     {
 
@@ -473,6 +476,7 @@ void loop()
 
     } // end of loop()
 
+// ------------------------------------------------------------------
 
 
 /*
