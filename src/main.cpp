@@ -9,9 +9,9 @@
 //#define DEBUG_OUT
 
 // NB number the ESP8266 devices and edit the next 2 #defines accordingly !
-#define MQTT_DEVICE "esp08"                                                                         // MQTT requires unique device ID (see reconnect() function)
-#define PUB_SUB_CLIENT esp08client                                                                  // and unique client ?
-#define MQTT_LOCATION "test"                                                                        // location for MQTT topic
+#define MQTT_DEVICE "esp04"                                                                         // MQTT requires unique device ID (see reconnect() function)
+#define PUB_SUB_CLIENT esp04client                                                                  // and unique client ?
+#define MQTT_LOCATION "garage"                                                                        // location for MQTT topic
 #define UPDATE_FREQ 60000L                                                                          // 60 seconds
 
 long updateFreq = 0;                                                                                // the update frequency for sensors and publish to MQTT
@@ -19,10 +19,17 @@ int timerID;
 
 // ------------------------------------------------------------------
 // MQTT
+const char* mqtt_server = "192.168.1.100";
+const int mqttPort = 1883;
+const char* mqttUser = "mqttUser2";
+const char* mqttPassword = "jR5b73Wklx";
+
+/*
 const char* mqtt_server = "192.168.1.74";
 const int mqttPort = 1883;
 const char* mqttUser = "mqttUser";
 const char* mqttPassword = "hTR7gxBY4";
+*/
 
 // MQTT code from: https://randomnerdtutorials.com/raspberry-pi-publishing-mqtt-messages-to-esp8266/
 //                 https://github.com/knolleary/pubsubclient
@@ -53,23 +60,23 @@ remove averaging and median filters. just send raw data at updateFreq
 // Comment out sensors not in use
 // ------------------------------
 #define WEMOS_SHT30                                                                                 // Wemos Temperature and Humidity shield
-//#define WEMOS_HP303                                                                                 // Wemos Barometric Pressure Shield
-//#define WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
+#define WEMOS_HP303                                                                                 // Wemos Barometric Pressure Shield
+#define WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
 //#define WEMOS_BATTERY                                                                               // Wemos Battery Shield
 //#define RSSI                                                                                        // measure RSSI
 
 // define which WiFi network to connect to (only 1 should be active)
 // -----------------------------------------------------------------
 //#define BTHUB
-#define BTHUB6
-//#define LINKSYS
+//#define BTHUB6
+#define LINKSYS
 
-#ifdef BTHUB                                                                                        // Gym
+#ifdef BTHUB                                                                                        // Weights Room
     const char* ssid = "BTHub4-5H9P";                                                               // BTHub WiFi credentials
     const char* password = "nB67c3zuRlPrAVcZL5YN";
 #endif
 
-#ifdef BTHUB6                                                                                       // Gym
+#ifdef BTHUB6                                                                                       // Weights Room
     const char* ssid = "BTHub6-7N5K";                                                               // new BTHub WiFi credentials
     const char* password = "QeC3RCJGeUvx";
 #endif
