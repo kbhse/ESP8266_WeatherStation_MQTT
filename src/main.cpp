@@ -3,7 +3,7 @@
 #define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind"                           // what the program does
 #define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                    // hardware version
 #define AUTHOR "J Manson"                                                                           // created by
-#define CREATION_DATE "Feb 2020"                                                                    // date
+#define CREATION_DATE "20 Feb 2020"                                                                    // date
 //#define DEBUG_OUT
 
 #include <Arduino.h>
