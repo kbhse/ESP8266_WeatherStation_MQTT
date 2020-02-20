@@ -1,5 +1,5 @@
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                       // program name
-#define VERSION "v04.07"                                                                            // program version (nb lowercase 'version' is keyword)
+#define VERSION "v04.08"                                                                            // program version (nb lowercase 'version' is keyword)
 #define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind"                           // what the program does
 #define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                    // hardware version
 #define AUTHOR "J Manson"                                                                           // created by
