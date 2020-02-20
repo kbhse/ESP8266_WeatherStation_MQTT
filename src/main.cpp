@@ -1,5 +1,5 @@
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                       // program name
-#define VERSION "v04.08"                                                                            // program version (nb lowercase 'version' is keyword)
+#define VERSION "v04.09"                                                                            // program version (nb lowercase 'version' is keyword)
 #define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind"                           // what the program does
 #define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                    // hardware version
 #define AUTHOR "J Manson"                                                                           // created by
@@ -30,7 +30,8 @@
 04.05 add credentials for BTHub6-7N5K
 04.06 fix routines to change update frequency from Node RED via MQTT
 04.07 adding RS485 wind sensors
-04.08 windspeed implemented, publishing to MQTT
+04.08 winds peed implemented, publishing to MQTT
+04.09 wind direction implemented
 */
 
 /*
@@ -414,6 +415,25 @@ void readSensors()
             Serial.print(windSpeed);
             Serial.println(" m/s");
         #endif
+
+        delay(100);   // needs delay here - why? duration?
+
+        digitalWrite(rtsPin, transmit);                                                            // init transmission
+        RS485.write(windDirectionInquiryFrame, sizeof(windDirectionInquiryFrame));                 // send the Inquiry
+        RS485.flush();                                                                             // Wait for the transmission to complete
+
+        digitalWrite(rtsPin, receive);                                                             // init receive
+        RS485.readBytes(responseFrameBuff, 7);                                                     // read the data
+
+        static char directionTemp[2];                                                              // client.publish() expects char array
+        int direction = responseFrameBuff[4];                                                      // low byte
+        itoa(direction, directionTemp, 10);                                                        // convert float to char array
+        client.publish(MQTT_LOCATION "/windDirection", directionTemp);                             // publish to MQTT, topic /windSpeed
+
+        digitalWrite(LED_pin, HIGH);
+        delay(100);
+        digitalWrite(LED_pin, LOW);
+
     #endif
 
   	} // end of readSensors()
