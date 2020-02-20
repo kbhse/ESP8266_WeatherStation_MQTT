@@ -16,6 +16,12 @@
 // MQTT code from: https://randomnerdtutorials.com/raspberry-pi-publishing-mqtt-messages-to-esp8266/
 //                 https://github.com/knolleary/pubsubclient
 
+// ------------------------------------------------------------------
+// Pins
+
+
+// ------------------------------------------------------------------
+
 /* Changelog
 04.00 average 10 samples
 04.02 add routines to change update frequency from Node RED via MQTT
@@ -24,6 +30,7 @@
 04.05 add credentials for BTHub6-7N5K
 04.06 fix routines to change update frequency from Node RED via MQTT
 04.07 adding RS485 wind sensors
+04.08 windspeed implemented, publishing to MQTT
 */
 
 /*
@@ -35,8 +42,8 @@ remove averaging and median filters. just send raw data at updateFreq
 
 // ------------------------------------------------------------------
 // unique number for each ESP8266 device and edit the next 2 #defines accordingly
-#define MQTT_DEVICE "esp10"                                                                         // MQTT requires unique device ID (see reconnect() function)
-#define PUB_SUB_CLIENT esp10client                                                                  // and unique client ?
+#define MQTT_DEVICE "esp09"                                                                         // MQTT requires unique device ID (see reconnect() function)
+#define PUB_SUB_CLIENT esp09client                                                                  // and unique client ?
 #define MQTT_LOCATION "windMast"                                                                    // location for MQTT topic
 //#define UPDATE_FREQ 60000L                                                                          // 60 seconds
 
@@ -64,7 +71,7 @@ const char* mqttPassword = "hTR7gxBY4";
 //#define WEMOS_HP303                                                                                 // Wemos Barometric Pressure Shield
 //#define WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
 //#define WEMOS_BATTERY                                                                               // Wemos Battery Shield
-//#define RSSI                                                                                        // measure RSSI
+//#define RSSI                                                                                        // ESP8266 WiFi RSSI
 #define RS485_WIND                                                                                  // Anemometer and Wind Direction
 
 // -----------------------------------------------------------------
@@ -118,8 +125,8 @@ const int lamp = LED_BUILTIN;
 #endif
 
 #ifdef RS485_WIND
-    const byte anemometerInquiryFrame[] = {0x01, 0x03, 0x00, 0x16, 0x00, 0x01, 0x65, 0xCE};            // Anemometer Inquiry frame
-    const byte windDirectionInquiryFrame[] = {0x02, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x39};         // Wind Direction Sensor Inquiry frame
+    //const byte anemometerInquiryFrame[] = {0x01, 0x03, 0x00, 0x16, 0x00, 0x01, 0x65, 0xCE};            // Anemometer Inquiry frame
+    //const byte windDirectionInquiryFrame[] = {0x02, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x39};         // Wind Direction Sensor Inquiry frame
     byte responseFrameBuff[7] = {};                                                                    // buffer for receiving response frame from sensors
     //long updateFreq;                                                                                   // sensor update frequency (millis)
     float windSpeed;
@@ -132,6 +139,68 @@ const int lamp = LED_BUILTIN;
     #define ledPin D4
 
     SoftwareSerial RS485(rxPin, txPin);                                                                // instantiate SoftwareSerial object
+
+    // anemometer type B - not used
+    // const byte anemometerInquiryFrame[] = {0x01, 0x03, 0x00, 0x16, 0x00, 0x01, 0x65, 0xCE};            // Anemometer Inquiry frame
+
+    /*
+    Anemometer on address 0x03
+                              bytes
+    device address:             1   0x03
+    function number:            1   0x03
+    start register address:     2   0x0000
+    number of registers:        2   0x0001
+    CRC-16/MODBUS               2   0x85E8
+    */
+    const byte anemometerInquiryFrame[] = {0x03, 0x03, 0x00, 0x00, 0x00, 0x01, 0x85, 0xE8};
+    /*
+    the response frame should be:
+                              bytes
+    device address:             1   0x03
+    function number:            1   0x03
+    number of valid bytes       1   0x02
+    data:                       2   0x0008
+    CRC-16/MODBUS               2   0xC042          ** check this!
+
+    data / 10 => speed m/s (0.8 m/s)
+
+    range:              0 - 32.4 m/s
+    precision:          0.3 m/s
+    start speed:        0.8 m/s
+    */
+
+    /*
+    Wind Direction Sensor on address 0x02
+    */
+    const byte windDirectionInquiryFrame[] = {0x02, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x39};         // Wind Direction Sensor Inquiry frame
+
+    /*
+    Modbus Device address can be set to 0-255. You can set a new address by transmitting a frame
+    with the first byte (the device address) set to 0x00. **Only do this with 1 device on the bus!
+    Eg to set a device to address 3:
+                          bytes
+    device address:             1   0x00
+    function number:            1   0x16
+    start register address:     2   0x1000
+    number of registers:        2   0x0001
+    number of valid bytes       1   0x02
+    SET new device address:     2   0x0003
+    CRC-16/MODBUS               2   0x7A2A
+
+    const byte modifyDeviceAddressFrame[] = {0x00, 0x16, 0x10, 0x00, 0x00, 0x01, 0x02, 0x00, 0x03, 0x7A, 0x2A};
+
+    CRC-16/MODBUS use this calculator: https://crccalc.com/
+    the CRC is sent little-endian (low byte first)
+
+    the response frame should be:
+                              bytes
+    device address:             1   0x00
+    function number:            1   0x16
+    start register address:     2   0x1000
+    number of registers:        2   0x0001
+    CRC-16/MODBUS               2   0x8CD8
+    */
+
 #endif
 
 // ------------------------------------------------------------------
@@ -318,13 +387,20 @@ void readSensors()
     #endif
 */
     #ifdef RS485_WIND
+
         digitalWrite(rtsPin, transmit);                                                                // init transmission
         RS485.write(anemometerInquiryFrame, sizeof(anemometerInquiryFrame));                           // send the Inquiry
         RS485.flush();                                                                                 // Wait for the transmission to complete
 
         digitalWrite(rtsPin, receive);                                                                 // init receive
-        responseFrameBuff[] = {};                                                                      // clear the buffer
+        //responseFrameBuff[] = {};                                                                      // clear the buffer
+        //memset(responseFrameBuff, 0, sizeof(responseFrameBuff));
         RS485.readBytes(responseFrameBuff, 7);                                                         // read the data
+        
+        static char speedTemp[6];                                                                      // client.publish() expects char array
+        int speed = responseFrameBuff[3] * 256 + responseFrameBuff[4];                                 // high low bytes
+        itoa(speed, speedTemp, 10);                                                                    // convert float to char array
+        client.publish(MQTT_LOCATION "/windSpeed", speedTemp);                                         // publish to MQTT, topic /windSpeed
 
         #ifdef DEBUG_OUT
             Serial.print("wind speed: ");
@@ -343,9 +419,9 @@ void readSensors()
   	} // end of readSensors()
 
 // ------------------------------------------------------------------
-// This functions is executed when some device publishes a message to a topic that your ESP8266 is subscribed to
-// Change the function below to add logic to your program, so when a device publishes a message to a topic that 
-// your ESP8266 is subscribed you can actually do something
+// This functions is executed when a device publishes a message to a topic that an ESP8266 is subscribed to
+// Change the function below to add logic to the program, so when a device publishes a message to a topic that 
+// an ESP8266 is subscribed to it can do something
 void callback(String topic, byte* message, unsigned int length)
     {
     Serial.print("Message arrived on topic: ");
