@@ -1,10 +1,10 @@
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                       // program name
-#define VERSION "v04.09"                                                                            // program version (nb lowercase 'version' is keyword)
+#define VERSION "v04.10"                                                                            // program version (nb lowercase 'version' is keyword)
 #define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind"                           // what the program does
 #define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                    // hardware version
 #define AUTHOR "J Manson"                                                                           // created by
 #define CREATION_DATE "20 Feb 2020"                                                                    // date
-//#define DEBUG_OUT
+#define DEBUG_OUT
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -32,6 +32,7 @@
 04.07 adding RS485 wind sensors
 04.08 winds peed implemented, publishing to MQTT
 04.09 wind direction implemented
+04.10 refactor
 */
 
 /*
@@ -190,8 +191,9 @@ const int lamp = LED_BUILTIN;
 
     const byte modifyDeviceAddressFrame[] = {0x00, 0x16, 0x10, 0x00, 0x00, 0x01, 0x02, 0x00, 0x03, 0x7A, 0x2A};
 
-    CRC-16/MODBUS use this calculator: https://crccalc.com/
+    CRC-16/MODBUS online calculator: https://crccalc.com/
     the CRC is sent little-endian (low byte first)
+    https://stackoverflow.com/questions/19347685/calculating-modbus-rtu-crc-16
 
     the response frame should be:
                               bytes
@@ -430,9 +432,9 @@ void readSensors()
         itoa(direction, directionTemp, 10);                                                        // convert float to char array
         client.publish(MQTT_LOCATION "/windDirection", directionTemp);                             // publish to MQTT, topic /windSpeed
 
-        digitalWrite(LED_pin, HIGH);
+        digitalWrite(ledPin, HIGH);
         delay(100);
-        digitalWrite(LED_pin, LOW);
+        digitalWrite(ledPin, LOW);
 
     #endif
 
