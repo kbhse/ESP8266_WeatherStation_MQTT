@@ -39,6 +39,7 @@
 
 /*
 ToDo:
+CRC checksum for wind direction
 set limits for sensor updateFreqs based on response times
 remove averaging and median filters. just send raw data at updateFreq
 (raw data to database, smoothing in Node RED)
@@ -81,14 +82,9 @@ const char* mqttPassword = "hTR7gxBY4";
 // -----------------------------------------------------------------
 // define which WiFi network to connect to (only 1 should be active)
 
-//#define BTHUB
-//#define BTHUB6
-#define LINKSYS
+#define BTHUB6
 
-#ifdef BTHUB                                                                                        // Weights Room
-    const char* ssid = "BTHub4-5H9P";                                                               // BTHub WiFi credentials
-    const char* password = "nB67c3zuRlPrAVcZL5YN";
-#endif
+//#define LINKSYS
 
 #ifdef BTHUB6                                                                                       // Weights Room
     const char* ssid = "BTHub6-7N5K";                                                               // new BTHub WiFi credentials
@@ -156,7 +152,7 @@ const int lamp = LED_BUILTIN;
     number of registers:        2   0x0001
     CRC-16/MODBUS               2   0x85E8
     */
-    const byte anemometerInquiryFrame[] = {0x03, 0x03, 0x00, 0x00, 0x00, 0x01, 0x85, 0xE8};
+    const byte anemometerInquiryFrame[] = {0x03, 0x03, 0x00, 0x00, 0x00, 0x01, 0x85, 0xE8};            // Wind Speed Sensor Inquiry frame
     /*
     the response frame should be:
                               bytes
@@ -450,20 +446,22 @@ void readSensors()
         word crc;
         do
             {
-            digitalWrite(rtsPin, transmit);                                                                // init transmission
-            RS485.write(anemometerInquiryFrame, sizeof(anemometerInquiryFrame));                           // send the Inquiry
-            RS485.flush();                                                                                 // Wait for the transmission to complete
+            digitalWrite(rtsPin, transmit);                                        // init transmission
+            RS485.write(anemometerInquiryFrame, sizeof(anemometerInquiryFrame));   // send the Inquiry
+            RS485.flush();                                                         // Wait for the transmission to complete
 
-            digitalWrite(rtsPin, receive);                                                                 // init receive
-            RS485.readBytes(responseFrameBuff, 7);                                                         // read the data
+            digitalWrite(rtsPin, receive);                                         // init receive
+            RS485.readBytes(responseFrameBuff, 7);                                 // read the data
 
-            checksum = CRC16 (responseFrameBuff, 5);                                                       // calculate CRC-16/MODBUS checksum
-            crc = responseFrameBuff[6] * 256 + responseFrameBuff[5];                                       // get checksum from buffer
+            checksum = CRC16 (responseFrameBuff, 5);                               // calculate CRC-16/MODBUS checksum
+            crc = responseFrameBuff[6] * 256 + responseFrameBuff[5];               // get checksum from buffer
+            Serial.print("+");
             }
-        while (checksum != crc);                                                                           // test if checksum ok
+        while (checksum != crc);                                                   // test if checksum is ok
+        Serial.println();
         
-        static char speedTemp[6];                                                                      // client.publish() expects char array
-        int speed = responseFrameBuff[3] * 256 + responseFrameBuff[4];                                 // high low bytes
+        static char speedTemp[6];                                                  // client.publish() expects char array
+        int speed = responseFrameBuff[3] * 256 + responseFrameBuff[4];             // high low bytes
         itoa(speed, speedTemp, 10);                                                                    // convert float to char array
         client.publish(MQTT_LOCATION "/windSpeed", speedTemp);                                         // publish to MQTT, topic /windSpeed
 
@@ -505,7 +503,7 @@ void readSensors()
         itoa(direction, directionTemp, 10);                                                        // convert float to char array
         client.publish(MQTT_LOCATION "/windDirection", directionTemp);                             // publish to MQTT, topic /windSpeed
 
-        digitalWrite(ledPin, HIGH);
+        digitalWrite(ledPin, HIGH);                                                                // flash the LED
         delay(100);
         digitalWrite(ledPin, LOW);
 
