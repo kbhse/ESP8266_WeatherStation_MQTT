@@ -1,13 +1,14 @@
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                       // program name
-#define VERSION "v04.11"                                                                            // program version (nb lowercase 'version' is keyword)
-#define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind"                           // what the program does
+#define VERSION "v04.12"                                                                            // program version (nb lowercase 'version' is keyword)
+#define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind, CO2"                           // what the program does
 #define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                    // hardware version
 #define AUTHOR "J Manson"                                                                           // created by
-#define CREATION_DATE "20 Feb 2020"                                                                 // date
+#define CREATION_DATE "9 April 2020"                                                                 // date
 #define DEBUG_OUT
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include "NDIR_I2C.h"                                                                               // CO2 sensor library https://github.com/SandboxElectronics/NDIR http://sandboxelectronics.com/?product=mh-z16-ndir-co2-sensor-with-i2cuart-5v3-3v-interface-for-arduinoraspeberry-pi
 #include "SimpleTimer.h"                                                                            // https://playground.arduino.cc/Code/SimpleTimer/ https://github.com/marcelloromani/arduino/tree/master/SimpleTimer
 #include "WEMOS_SHT3X.h"                                                                            // Wemos Temperature and Humidity shield library
 #include "PubSubClient.h"                                                                           // https://github.com/knolleary/pubsubclient
@@ -20,7 +21,10 @@
 // ------------------------------------------------------------------
 // Pins
 
-
+// ------------------------------------------------------------------
+// Calibrate CO2 Sensor
+// Re-calibration of the sensor should be done in fresh air. After power on the sensor and put it in fresh air for at least 5 minutes.
+// press the calibration button for at least 10 seconds
 // ------------------------------------------------------------------
 
 /* Changelog
@@ -35,6 +39,7 @@
 04.09 wind direction implemented
 04.10 refactor
 04.11 add CRC-16/MODBUS checksum function
+04.12 adding CO2 sensor
 */
 
 /*
@@ -47,9 +52,9 @@ remove averaging and median filters. just send raw data at updateFreq
 
 // ------------------------------------------------------------------
 // unique number for each ESP8266 device and edit the next 2 #defines accordingly
-#define MQTT_DEVICE "esp09"                                                                         // MQTT requires unique device ID (see reconnect() function)
-#define PUB_SUB_CLIENT esp09client                                                                  // and unique client ?
-#define MQTT_LOCATION "windMast"                                                                    // location for MQTT topic
+#define MQTT_DEVICE "esp11"                                                                         // MQTT requires unique device ID (see reconnect() function)
+#define PUB_SUB_CLIENT esp11client                                                                  // and unique client ?
+#define MQTT_LOCATION "sdCabinet"                                                                    // location for MQTT topic
 //#define UPDATE_FREQ 60000L                                                                          // 60 seconds
 
 long updateFreq = 0;                                                                                // the update frequency for sensors and publish to MQTT
@@ -77,7 +82,8 @@ const char* mqttPassword = "hTR7gxBY4";
 //#define WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
 //#define WEMOS_BATTERY                                                                               // Wemos Battery Shield
 //#define RSSI                                                                                        // ESP8266 WiFi RSSI
-#define RS485_WIND                                                                                  // Anemometer and Wind Direction
+//#define RS485_WIND                                                                                  // Anemometer and Wind Direction
+#define CO2                                                                                         // sandbox electronics CO2 sensor
 
 // -----------------------------------------------------------------
 // define which WiFi network to connect to (only 1 should be active)
@@ -106,6 +112,11 @@ PubSubClient client(PUB_SUB_CLIENT);
 const int lamp = LED_BUILTIN;
 
 // ------------------------------------------------------------------
+
+#ifdef CO2
+    #include <NDIR_I2C.h>
+    NDIR_I2C mySensor(0x4D);                                  //Adaptor's I2C address (7-bit, default: 0x4D)
+#endif
 
 #ifdef WEMOS_SHT30
     #include <WEMOS_SHT3X.h>                                                                        // Wemos Temperature and Humidity shield
@@ -360,6 +371,23 @@ void combSort11(float *ar, uint8_t n)                                           
 void readSensors()
     {                                                                                               // function: reads sensors and sends data to blynk app
 	
+    #ifdef CO2
+        //int ppmReading;                                           
+        #ifdef DEBUG_OUT
+            Serial.println(F("Reading the CO2 sensor: "));
+        #endif
+        mySensor.measure();
+        uint16_t ppmReading = mySensor.ppm;                                                         // CO2 in ppm
+        static char CO2Temp[7];                                                                     // client.publish() expects char array
+        itoa(ppmReading, CO2Temp, 10);
+        client.publish(MQTT_LOCATION "/CO2", CO2Temp);
+        #ifdef DEBUG_OUT
+            Serial.print("CO2: ");
+            Serial.print(ppmReading);
+            Serial.println(" ppm");
+        #endif
+    #endif
+
     #ifdef WEMOS_SHT30                                                                              // temperature and humidity
         #ifdef DEBUG_OUT
             Serial.println(F("Reading the SHT30: "));
@@ -576,6 +604,20 @@ void setup()
     setup_wifi();
     client.setServer(mqtt_server, mqttPort);
     client.setCallback(callback);
+
+    #ifdef CO2
+        if (mySensor.begin())
+            {
+            Serial.println();
+            Serial.println("Wait 10 seconds for CO2 sensor initialization...");
+            delay(10000);
+            }
+        else
+            {
+            Serial.println("ERROR: Failed to connect to the sensor.");
+            while(1);
+            }
+    #endif
 
     #ifdef WEMOS_HP303                                                                              // Wemos Barometric Pressure HP303B Shield
         HP303B.begin();                                                                             // I2C address = 0x77 (or HP303B.begin(0x76); //I2C address = 0x76)
