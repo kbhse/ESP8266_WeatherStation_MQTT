@@ -1,5 +1,5 @@
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                       // program name
-#define VERSION "v04.12"                                                                            // program version (nb lowercase 'version' is keyword)
+#define VERSION "v04.18"                                                                            // program version (nb lowercase 'version' is keyword)
 #define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind, CO2"                           // what the program does
 #define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                    // hardware version
 #define AUTHOR "J Manson"                                                                           // created by
@@ -14,15 +14,28 @@
 #include "PubSubClient.h"                                                                           // https://github.com/knolleary/pubsubclient
 #include "SoftwareSerial.cpp"                                                                       // https://github.com/plerup/espsoftwareserial
                                                                                                     // NB ESP needs this version of SoftwareSerial !! (and needs to be in PLatform IO lib)
+#include "RBDdimmer.h"                                                                              // https://github.com/RobotDynOfficial/RBDDimmer
 
 // MQTT code from: https://randomnerdtutorials.com/raspberry-pi-publishing-mqtt-messages-to-esp8266/
 //                 https://github.com/knolleary/pubsubclient
+
+// Functions
+//
+// void reconnect()                                                     This functions reconnects your ESP8266 to your MQTT broker
+// void setup_wifi()
+// void combSort11(float *ar, uint8_t n)
+// void readSensors()                                                   Read the sensors and publish to MQTT. called by timer @ updateFreq
+// void callback(String topic, byte* message, unsigned int length)      This functions is executed when a device publishes a message to a topic that an ESP8266 is subscribed to
+// void setup()
+// void loop()
+
+
 
 // ------------------------------------------------------------------
 // Pins
 
 // ------------------------------------------------------------------
-// Calibrate CO2 Sensor
+// Calibrate CO2 Sensor (self-calibration disabled in setup())
 // Re-calibration of the sensor should be done in fresh air. After power on the sensor and put it in fresh air for at least 5 minutes.
 // press the calibration button for at least 10 seconds
 // ------------------------------------------------------------------
@@ -40,6 +53,9 @@
 04.10 refactor
 04.11 add CRC-16/MODBUS checksum function
 04.12 adding CO2 sensor
+04.14 turn onboard LED OFF by default (in setup)
+04.17 add mySensor.disableAutoCalibration() in setup() for CO2 sensor
+04.17 add filter for outlier rejection
 */
 
 /*
@@ -48,13 +64,15 @@ CRC checksum for wind direction
 set limits for sensor updateFreqs based on response times
 remove averaging and median filters. just send raw data at updateFreq
 (raw data to database, smoothing in Node RED)
+WiFi reconnect routine
 */
 
 // ------------------------------------------------------------------
 // unique number for each ESP8266 device and edit the next 2 #defines accordingly
-#define MQTT_DEVICE "esp11"                                                                         // MQTT requires unique device ID (see reconnect() function)
-#define PUB_SUB_CLIENT esp11client                                                                  // and unique client ?
-#define MQTT_LOCATION "sdCabinet"                                                                    // location for MQTT topic
+#define MQTT_DEVICE "esp20"                                                                         // MQTT requires unique device ID (see reconnect() function)
+#define PUB_SUB_CLIENT esp20client                                                                  // and unique client ?
+#define MQTT_LOCATION "fridge"                                                                    // location for MQTT topic
+#define LED_STARTS_OFF                                                                            // initial state of on-board LED
 //#define UPDATE_FREQ 60000L                                                                          // 60 seconds
 
 long updateFreq = 0;                                                                                // the update frequency for sensors and publish to MQTT
@@ -77,24 +95,30 @@ const char* mqttPassword = "hTR7gxBY4";
 // ------------------------------------------------------------------
 // Comment out sensors not in use
 
-//#define WEMOS_SHT30                                                                                 // Wemos Temperature and Humidity shield
+#define WEMOS_SHT30                                                                                 // Wemos Temperature and Humidity shield
 //#define WEMOS_HP303                                                                                 // Wemos Barometric Pressure Shield
 //#define WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
 //#define WEMOS_BATTERY                                                                               // Wemos Battery Shield
 //#define RSSI                                                                                        // ESP8266 WiFi RSSI
 //#define RS485_WIND                                                                                  // Anemometer and Wind Direction
-#define CO2                                                                                         // sandbox electronics CO2 sensor
+//#define CO2                                                                                         // sandbox electronics CO2 sensor - NB recalibrate in fresh air regularly
+//#define ROBOTDYN_ACDIMMER                                                                           // Robotdyn zero-crossing detector and AC dimmer module
 
 // -----------------------------------------------------------------
 // define which WiFi network to connect to (only 1 should be active)
 
 #define BTHUB6
-
+//#define BTHUBKBHSE              // NB not useable with this sketch because no MQTT Server on KBHSE Network
 //#define LINKSYS
 
 #ifdef BTHUB6                                                                                       // Weights Room
     const char* ssid = "BTHub6-7N5K";                                                               // new BTHub WiFi credentials
     const char* password = "QeC3RCJGeUvx";
+#endif
+
+#ifdef BTHUBKBHSE
+    const char* ssid = "BT-HZA8HJ";                                                               // KBHSE BTHub WiFi credentials
+    const char* password = "fyurGVup6qru3H";
 #endif
 
 #ifdef LINKSYS                                                                                      // Garage
@@ -119,19 +143,19 @@ const int lamp = LED_BUILTIN;
 #endif
 
 #ifdef WEMOS_SHT30
-    #include <WEMOS_SHT3X.h>                                                                        // Wemos Temperature and Humidity shield
+    #include "WEMOS_SHT3X.h"                                                                       // Wemos Temperature and Humidity shield
     SHT3X sht30(0x45);                                                                              // SHT30 shield has two user selectable I2C addresses
     //static char sht_temperature[7];
     //static char sht_humidity[7];
 #endif
 
 #ifdef WEMOS_HP303
-    #include <LOLIN_HP303B.h>                                                                       // Wemos Barometric Pressure HP303B Shield https://github.com/wemos/LOLIN_HP303B_Library
+    #include "LOLIN_HP303B.h"                                                                       // Wemos Barometric Pressure HP303B Shield https://github.com/wemos/LOLIN_HP303B_Library
     LOLIN_HP303B HP303B;
 #endif
 
 #ifdef WEMOS_BH1750                                                                                 // Wemos Ambient Light Shield
-    #include <BH1750.h>                                                                             // ambient light sensor https://github.com/claws/BH1750
+    #include "BH1750.h"                                                                             // ambient light sensor https://github.com/claws/BH1750
     BH1750 lightMeter(0x23);                                                                        // BH1750 can be configured to use two I2C addresses, 0x23 (default)or 0x5C
 #endif
 
@@ -213,6 +237,13 @@ const int lamp = LED_BUILTIN;
     CRC-16/MODBUS               2   0x8CD8
     */
 
+#endif
+
+#ifdef ROBOTDYN_ACDIMMER
+    #define dimmerPWMPin  D7
+    #define zerocross  D6
+    dimmerLamp dimmer(dimmerPWMPin, zerocross);                                                    // the class is dimmerLamp
+    int outVal = 0;                                                                                // PWM Output value (%)
 #endif
 
 // ------------------------------------------------------------------
@@ -589,7 +620,15 @@ void callback(String topic, byte* message, unsigned int length)
             Serial.print("Off");
             }
         }
-        Serial.println();
+
+    if(topic == MQTT_LOCATION "/fanTempSetpoint")
+        {
+        //= messageTemp.toInt();
+
+
+        }
+
+    Serial.println();
     }   // end of callback()
 
 // ------------------------------------------------------------------
@@ -597,9 +636,12 @@ void setup()
     {
 
     Serial.begin(115200);
-    Serial.printf("\n\n%s_%s, %s, %s, %s\n\n", PROGNAM, VERSION, AUTHOR, CREATION_DATE, MQTT_DEVICE);
+    Serial.printf("\n\n%s_%s, %s, %s, %s, %s\n\n", PROGNAM, VERSION, AUTHOR, CREATION_DATE, MQTT_DEVICE, MQTT_LOCATION);
 
     pinMode(lamp, OUTPUT);
+    #ifdef LED_STARTS_OFF
+        digitalWrite(lamp, HIGH);                                                                      // turn onboard LED OFF
+    #endif
 
     setup_wifi();
     client.setServer(mqtt_server, mqttPort);
@@ -617,6 +659,7 @@ void setup()
             Serial.println("ERROR: Failed to connect to the sensor.");
             while(1);
             }
+        mySensor.disableAutoCalibration();                                                         // stop the sensor self-calibration function (it expects sensor to be in fresh air at some point in a 24 hour period - which it isn't)
     #endif
 
     #ifdef WEMOS_HP303                                                                              // Wemos Barometric Pressure HP303B Shield
@@ -641,6 +684,10 @@ void setup()
         delay(1000);
     #endif
 
+    #ifdef ROBOTDYN_ACDIMMER
+        dimmer.begin(NORMAL_MODE, ON);                      //dimmer initialisation: name.begin(MODE, STATE) 
+    #endif
+    
     if (!client.connected())
         {
         reconnect();
@@ -684,6 +731,9 @@ void loop()
         }
 
     timer.run();
+
+    //outVal = map(analogRead(A0), 1, 1024, 20, 100);                                     // read potentiometer, analogRead(analog_pin), min_analog, max_analog, 20%, 100%);
+    //dimmer.setPower(outVal); 
 
     } // end of loop()
 
