@@ -1,10 +1,15 @@
+#define MCU "Wemos Lolin D1 Mini Pro V2"                                                            // MCU Hardware
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                       // program name
-#define VERSION "v04.18"                                                                            // program version (nb lowercase 'version' is keyword)
+#define VERSION "v04.19"                                                                            // program version (nb lowercase 'version' is keyword)
 #define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind, CO2"                           // what the program does
 #define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                    // hardware version
 #define AUTHOR "J Manson"                                                                           // created by
-#define CREATION_DATE "9 April 2020"                                                                 // date
+#define CREATION_DATE "31 August 2020"                                                                 // date
 #define DEBUG_OUT
+                                                                                                    // https://stackoverflow.com/questions/47346133/how-to-use-a-define-inside-a-format-string
+#define _STRINGIFY(x) #x                                                                            // this converts to string
+#define STRINGIFY(x) _STRINGIFY(x)                                                                  // this makes sure the argument is expanded before converting to string
+                                                                                                    // used to convert #define PUB_SUB_CLIENT esp30client to a string in id() function
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -12,9 +17,12 @@
 #include "SimpleTimer.h"                                                                            // https://playground.arduino.cc/Code/SimpleTimer/ https://github.com/marcelloromani/arduino/tree/master/SimpleTimer
 #include "WEMOS_SHT3X.h"                                                                            // Wemos Temperature and Humidity shield library
 #include "PubSubClient.h"                                                                           // https://github.com/knolleary/pubsubclient
-#include "SoftwareSerial.cpp"                                                                       // https://github.com/plerup/espsoftwareserial
+                                                                                                    // NB modified MQTT_MAX_PACKET_SIZE in PubSubClient.h from 128 to 384
+                                                                                                    // see https://www.hivemq.com/blog/mqtt-client-library-encyclopedia-arduino-pubsubclient/
+//#include "SoftwareSerial.cpp"                                                                       // https://github.com/plerup/espsoftwareserial
                                                                                                     // NB ESP needs this version of SoftwareSerial !! (and needs to be in PLatform IO lib)
 #include "RBDdimmer.h"                                                                              // https://github.com/RobotDynOfficial/RBDDimmer
+#include "ArduinoJson.h"                                                                            // https://github.com/bblanchon/ArduinoJson
 
 // MQTT code from: https://randomnerdtutorials.com/raspberry-pi-publishing-mqtt-messages-to-esp8266/
 //                 https://github.com/knolleary/pubsubclient
@@ -26,6 +34,7 @@
 // void combSort11(float *ar, uint8_t n)
 // void readSensors()                                                   Read the sensors and publish to MQTT. called by timer @ updateFreq
 // void callback(String topic, byte* message, unsigned int length)      This functions is executed when a device publishes a message to a topic that an ESP8266 is subscribed to
+// void id()                                                            create Json object containing ID data and publish to mqtt broker
 // void setup()
 // void loop()
 
@@ -69,9 +78,9 @@ WiFi reconnect routine
 
 // ------------------------------------------------------------------
 // unique number for each ESP8266 device and edit the next 2 #defines accordingly
-#define MQTT_DEVICE "esp20"                                                                         // MQTT requires unique device ID (see reconnect() function)
-#define PUB_SUB_CLIENT esp20client                                                                  // and unique client ?
-#define MQTT_LOCATION "fridge"                                                                    // location for MQTT topic
+#define MQTT_DEVICE "esp30"                                                                         // MQTT requires unique device ID (see reconnect() function)
+#define PUB_SUB_CLIENT esp30client                                                                  // and unique client ?
+#define MQTT_LOCATION "test"                                                                    // location for MQTT topic
 #define LED_STARTS_OFF                                                                            // initial state of on-board LED
 //#define UPDATE_FREQ 60000L                                                                          // 60 seconds
 
@@ -95,14 +104,14 @@ const char* mqttPassword = "hTR7gxBY4";
 // ------------------------------------------------------------------
 // Comment out sensors not in use
 
-#define WEMOS_SHT30                                                                                 // Wemos Temperature and Humidity shield
-//#define WEMOS_HP303                                                                                 // Wemos Barometric Pressure Shield
-//#define WEMOS_BH1750                                                                                // Wemos Ambient Light Shield
-//#define WEMOS_BATTERY                                                                               // Wemos Battery Shield
-//#define RSSI                                                                                        // ESP8266 WiFi RSSI
-//#define RS485_WIND                                                                                  // Anemometer and Wind Direction
-//#define CO2                                                                                         // sandbox electronics CO2 sensor - NB recalibrate in fresh air regularly
-//#define ROBOTDYN_ACDIMMER                                                                           // Robotdyn zero-crossing detector and AC dimmer module
+#define WEMOS_SHT30 "SHT30 "                                                                              // Wemos Temperature and Humidity shield
+//#define WEMOS_HP303 "HP303 "                                                                                // Wemos Barometric Pressure Shield
+//#define WEMOS_BH1750 "BH1750 "                                                                               // Wemos Ambient Light Shield
+//#define WEMOS_BATTERY "BATTERY "                                                                              // Wemos Battery Shield
+//#define RSSI "RSSI "                                                                                       // ESP8266 WiFi RSSI
+//#define RS485_WIND "WIND "                                                                                 // Anemometer and Wind Direction
+//#define CO2 "CO2 "                                                                                        // sandbox electronics CO2 sensor - NB recalibrate in fresh air regularly
+//#define ROBOTDYN_ACDIMMER "ACDIMMER "                                                                          // Robotdyn zero-crossing detector and AC dimmer module
 
 // -----------------------------------------------------------------
 // define which WiFi network to connect to (only 1 should be active)
@@ -277,8 +286,8 @@ SimpleTimer timer;
             // Subscribe or resubscribe to a topic
             // You can subscribe to more topics (to control more LEDs in this example)
             client.subscribe(MQTT_LOCATION "/lamp");
-            //client.subscribe(MQTT_LOCATION "/freq");
             client.subscribe("update/Freq/" MQTT_LOCATION);
+            client.subscribe("IDRequest");
             }
         else
             {
@@ -571,7 +580,83 @@ void readSensors()
   	} // end of readSensors()
 
 // ------------------------------------------------------------------
+void id()                                                                                          // create Json object containing ID data and publish to mqtt broker
+                                                                                                   // https://techtutorialsx.com/2017/04/29/esp32-sending-json-messages-over-mqtt/
+                                                                                                   // https://github.com/bblanchon/ArduinoJson/blob/6.x/examples/JsonGeneratorExample/JsonGeneratorExample.ino
+                                                                                                   // https://arduinojson.org/v6/doc/serialization/
+                                                                                                   // PubSubClient: As part of minimising its footprint, it limits the size of any MQTT packet it can send or receive to 128 bytes.
+                                                                                                   // If you want to send or receive messages larger than this, you must change the value of MQTT_MAX_PACKET_SIZE in PubSubClient.h
+                                                                                                   // The library allocates this much memory in its internal buffer, which reduces the memory available to the sketch itself.
+                                                                                                   // https://www.hivemq.com/blog/mqtt-client-library-encyclopedia-arduino-pubsubclient/
+    {
+
+    //StaticJsonBuffer<300> JSONbuffer;
+    //JsonObject& JSONencoder = JSONbuffer.createObject();
+
+    StaticJsonDocument<400> doc;
+
+    doc["MCU"] = MCU;
+    doc["PROGNAM"] = PROGNAM;
+    doc["VERSION"] = VERSION;
+    Serial.println(WiFi.localIP());
+    doc["IP"] = WiFi.localIP().toString();
+    doc["ROUTER"] = ssid;
+    doc["MQTT_LOCATION"] = MQTT_LOCATION;
+    doc["MQTT_DEVICE"] = MQTT_DEVICE;
+    String pubSubClient = STRINGIFY(PUB_SUB_CLIENT);                                                        // used to convert PUB_SUB_CLIENT #define to a string  https://stackoverflow.com/questions/47346133/how-to-use-a-define-inside-a-format-string
+    Serial.println(pubSubClient);
+    doc["PUB_SUB_CLIENT"] = pubSubClient;
+    doc["UPDATE_FREQ"] = updateFreq;
+
+    String sensors;
+    #ifdef WEMOS_SHT30
+        sensors += WEMOS_SHT30;
+    #endif
+    #ifdef WEMOS_HP303
+        //sensors += ", ";
+        sensors += WEMOS_HP303;
+    #endif
+    #ifdef WEMOS_BH1750
+        sensors += WEMOS_BH1750;
+    #endif
+    #ifdef BATTERY
+        sensors += BATTERY;
+    #endif
+    #ifdef RSSI
+        sensors += RSSI;
+    #endif
+    #ifdef RS485_WIND
+        sensors += RS485_WIND;
+    #endif
+    #ifdef CO2
+        sensors += CO2;
+    #endif
+    #ifdef ROBOTDYN_ACDIMMER
+        sensors += ROBOTDYN_ACDIMMER;
+    #endif
+    doc["SENSORS"] = sensors;
+
+    // Generate the minified JSON and send it to the Serial port
+    serializeJson(doc, Serial);
+    Serial.println();
+    // Generate the prettified JSON and send it to the Serial port
+    serializeJsonPretty(doc, Serial);
+    Serial.println();
+
+    // Declare a buffer to hold the result
+    char jsonBuff[256];
+    // Produce a minified JSON document
+    serializeJson(doc, jsonBuff);
+    Serial.println(jsonBuff);
+    //publish to MQTT
+    client.publish("ID", jsonBuff);
+
+    }
+    // end of id()
+
+// ------------------------------------------------------------------
 // This functions is executed when a device publishes a message to a topic that an ESP8266 is subscribed to
+// (subscriptions are specified in reconnect() function)
 // Change the function below to add logic to the program, so when a device publishes a message to a topic that 
 // an ESP8266 is subscribed to it can do something
 void callback(String topic, byte* message, unsigned int length)
@@ -628,8 +713,17 @@ void callback(String topic, byte* message, unsigned int length)
 
         }
 
+    if(topic == "IDRequest")
+        {
+        id();
+        }
+
     Serial.println();
     }   // end of callback()
+
+// ------------------------------------------------------------------
+
+
 
 // ------------------------------------------------------------------
 void setup()
@@ -714,6 +808,8 @@ void setup()
 
     Serial.print("timerID: ");
     Serial.println(timerID);
+
+    id();
 
     } // end of setup()
 
