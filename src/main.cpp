@@ -1,10 +1,8 @@
-#define MCU "Wemos Lolin D1 Mini Pro V2"                                                            // MCU Hardware
 #define PROGNAM "ESP8266_WeatherStation_MQTT"                                                       // program name
-#define VERSION "v04.19"                                                                            // program version (nb lowercase 'version' is keyword)
-#define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind, CO2"                           // what the program does
-#define HARDWARE "Wemos D1 mini or pro with sensors and shields"                                    // hardware version
+#define VERSION "v04.20"                                                                            // program version (nb lowercase 'version' is keyword)
+#define PGMFUNCT "Temperature, Humidity, Pressure, Light Intensity, Wind, CO2"                      // what the program does
 #define AUTHOR "J Manson"                                                                           // created by
-#define CREATION_DATE "31 August 2020"                                                                 // date
+#define CREATION_DATE "31 August 2020"                                                              // date
 #define DEBUG_OUT
                                                                                                     // https://stackoverflow.com/questions/47346133/how-to-use-a-define-inside-a-format-string
 #define _STRINGIFY(x) #x                                                                            // this converts to string
@@ -65,6 +63,7 @@
 04.14 turn onboard LED OFF by default (in setup)
 04.17 add mySensor.disableAutoCalibration() in setup() for CO2 sensor
 04.17 add filter for outlier rejection
+04.20 add mqtt_server to ID
 */
 
 /*
@@ -78,10 +77,13 @@ WiFi reconnect routine
 
 // ------------------------------------------------------------------
 // unique number for each ESP8266 device and edit the next 2 #defines accordingly
-#define MQTT_DEVICE "esp30"                                                                         // MQTT requires unique device ID (see reconnect() function)
-#define PUB_SUB_CLIENT esp30client                                                                  // and unique client ?
+//#define MCU "ESP8266 D1 Mini"                                                                      // MCU Hardware
+#define MCU "ESP8266 D1 Mini Pro V2"                                                               // MCU Hardware
+#define MQTT_DEVICE "esp001"                                                                       // MQTT requires unique device ID (see reconnect() function)
+#define PUB_SUB_CLIENT esp001client                                                                // and unique client ?
 #define MQTT_LOCATION "test"                                                                    // location for MQTT topic
-#define LED_STARTS_OFF                                                                            // initial state of on-board LED
+//#define LED_STARTS_OFF                                                                            // initial state of on-board LED
+
 //#define UPDATE_FREQ 60000L                                                                          // 60 seconds
 
 long updateFreq = 0;                                                                                // the update frequency for sensors and publish to MQTT
@@ -137,7 +139,7 @@ const char* mqttPassword = "hTR7gxBY4";
 
 // -----------------------------------------------------------------
 // Initializes the espClient. You should change the espClient name if you have multiple ESPs running in your home automation system
-//WiFiClient espClient;
+
 WiFiClient PUB_SUB_CLIENT;
 PubSubClient client(PUB_SUB_CLIENT);
 
@@ -595,6 +597,7 @@ void id()                                                                       
 
     StaticJsonDocument<400> doc;
 
+    doc["MQTT_DEVICE"] = MQTT_DEVICE;
     doc["MCU"] = MCU;
     doc["PROGNAM"] = PROGNAM;
     doc["VERSION"] = VERSION;
@@ -602,11 +605,17 @@ void id()                                                                       
     doc["IP"] = WiFi.localIP().toString();
     doc["ROUTER"] = ssid;
     doc["MQTT_LOCATION"] = MQTT_LOCATION;
-    doc["MQTT_DEVICE"] = MQTT_DEVICE;
     String pubSubClient = STRINGIFY(PUB_SUB_CLIENT);                                                        // used to convert PUB_SUB_CLIENT #define to a string  https://stackoverflow.com/questions/47346133/how-to-use-a-define-inside-a-format-string
     Serial.println(pubSubClient);
     doc["PUB_SUB_CLIENT"] = pubSubClient;
+    doc["mqtt_server"] = mqtt_server;
     doc["UPDATE_FREQ"] = updateFreq;
+    #ifdef LED_STARTS_OFF
+        doc["LED_STARTS"] = "OFF";
+    #endif
+    #ifndef LED_STARTS_OFF
+        doc["LED_STARTS"] = "ON";
+    #endif
 
     String sensors;
     #ifdef WEMOS_SHT30
@@ -644,7 +653,7 @@ void id()                                                                       
     Serial.println();
 
     // Declare a buffer to hold the result
-    char jsonBuff[256];
+    char jsonBuff[384];
     // Produce a minified JSON document
     serializeJson(doc, jsonBuff);
     Serial.println(jsonBuff);
